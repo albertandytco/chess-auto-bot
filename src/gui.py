@@ -1,4 +1,4 @@
-import multiprocessing  # Usar multiprocessing em vez de multiprocess
+import multiprocessing 
 import threading
 import time
 import tkinter as tk
@@ -11,6 +11,35 @@ from selenium.common.exceptions import WebDriverException
 from overlay import run
 from stockfish_bot import StockfishBot
 import keyboard
+import logging
+from logging.handlers import RotatingFileHandler
+import sys
+from webdriver_manager.core.utils import get_browser_version_from_os
+
+#Logging config
+def setup_logging():
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    handler = RotatingFileHandler(
+        'chess_bot.log', 
+        maxBytes=1024*1024,  # 1MB
+        backupCount=3,
+        encoding='utf-8'
+    )
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    
+    # Log também para stdout
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+setup_logging()
 
 
 class GUI:
@@ -454,24 +483,66 @@ class GUI:
         self.open_browser_button["state"] = "disabled"
         self.open_browser_button.update()
 
+        try:
+        logging.info("Attempting to open Chrome browser")
+        
+        # check chrome version before open
+        try:
+            chrome_version = get_browser_version_from_os("chrome")
+            logging.info(f"Detected Chrome version: {chrome_version}")
+        except Exception as e:
+            logging.warning(f"Could not detect Chrome version: {str(e)}")
+
+
         # Open Webdriver
         options = webdriver.ChromeOptions()
         options.add_experimental_option("excludeSwitches", ["enable-logging"]) 
         try:
-            service = ChromeService(ChromeDriverManager().install()),
+           service = ChromeService(ChromeDriverManager().install())
+            logging.info("ChromeDriver installed successfully")
+            
             self.chrome = webdriver.Chrome(
                 service=service,
                 options=options
             )
-        except WebDriverException:
-            # No chrome installed
-            self.opening_browser = False
-            self.open_browser_button["text"] = "Open Browser"
-            self.open_browser_button["state"] = "normal"
-            self.open_browser_button.update()
-            tk.messagebox.showerror(
-                "Error",
-                "Cant find Chrome. You need to have Chrome installed for this to work.",
+            logging.info("Chrome WebDriver initialized successfully")
+        except WebDriverException as e:
+            error_msg = "Failed to initialize WebDriver"
+            logging.error(f"{error_msg}: {str(e)}", exc_info=True)
+            
+            self._handle_browser_error(
+                "Chrome Not Found",
+                "Google Chrome is required but not found.\n\n"
+                "Please install Chrome from:\n"
+                "https://www.google.com/chrome/\n\n"
+                "Error details:\n"
+                f"{str(e)}"
+            )
+            return
+            except PermissionError as e:
+            error_msg = "Permission denied when accessing ChromeDriver"
+            logging.error(f"{error_msg}: {str(e)}", exc_info=True)
+            
+            self._handle_browser_error(
+                "Permission Error",
+                "Could not access ChromeDriver due to permission issues.\n\n"
+                "Please try:\n"
+                "1. Running as administrator\n"
+                "2. Checking file permissions\n\n"
+                "Error details:\n"
+                f"{str(e)}"
+            )
+            return
+            except Exception as e:
+            error_msg = "Unexpected error initializing Chrome"
+            logging.error(f"{error_msg}: {str(e)}", exc_info=True)
+            
+            self._handle_browser_error(
+                "Unexpected Error",
+                "An unexpected error occurred while starting Chrome.\n\n"
+                "Please check the log file for details.\n"
+                "Error details:\n"
+                f"{str(e)}"
             )
             return
 
@@ -480,6 +551,18 @@ class GUI:
             self.chrome.get("https://www.chess.com")
         else:
             self.chrome.get("https://www.lichess.org")
+
+        # Store connection details
+        self.chrome_url = self.chrome.service.service_url
+        self.chrome_session_id = self.chrome.session_id
+        logging.info("Browser successfully opened and configured")
+
+        # Update UI
+        self.opening_browser = False
+        self.opened_browser = True
+        self.open_browser_button["text"] = "Browser is open"
+        self.open_browser_button["state"] = "disabled"
+        self.open_browser_button.update()
 
         # Build Stockfish Bot
         self.chrome_url = self.chrome.service.service_url
@@ -495,6 +578,24 @@ class GUI:
         # Enable run button
         self.start_button["state"] = "normal"
         self.start_button.update()
+
+    except Exception as e:
+        logging.error(f"Unexpected error in browser opening: {str(e)}", exc_info=True)
+        self._handle_browser_error(
+            "Critical Error",
+            "A critical error occurred. Please check the log file.\n"
+            f"Error: {str(e)}"
+        )
+
+    def _handle_browser_error(self, title, message):
+    """Centralized browser error handling"""
+    self.opening_browser = False
+    self.open_browser_button["text"] = "Open Browser"
+    self.open_browser_button["state"] = "normal"
+    self.open_browser_button.update()
+    
+    logging.error(f"Browser error: {title} - {message}")
+    tk.messagebox.showerror(title, message)
 
     def on_start_button_listener(self):
         # Check if Slow mover value is valid
