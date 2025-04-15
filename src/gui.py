@@ -1,16 +1,15 @@
-import multiprocessing
-
-import multiprocess
+import multiprocessing  # Usar multiprocessing em vez de multiprocess
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.service import Service as ChromeService
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import WebDriverException
 from overlay import run
 from stockfish_bot import StockfishBot
-from selenium.common import WebDriverException
 import keyboard
 
 
@@ -457,13 +456,11 @@ class GUI:
 
         # Open Webdriver
         options = webdriver.ChromeOptions()
-        options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_experimental_option('useAutomationExtension', False)
+        options.add_experimental_option("excludeSwitches", ["enable-logging"]) 
         try:
-            service = Service()
+            service = ChromeService(ChromeDriverManager().install()),
             self.chrome = webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()),
+                service=service,
                 options=options
             )
         except WebDriverException:
@@ -526,12 +523,12 @@ class GUI:
 
         # Create the pipes used for the communication
         # between the GUI and the Stockfish Bot process
-        parent_conn, child_conn = multiprocess.Pipe()
+        parent_conn, child_conn = multiprocessing.Pipe()
         self.stockfish_bot_pipe = parent_conn
 
         # Create the message queue that is used for the communication
         # between the Stockfish and the Overlay processes
-        st_ov_queue = multiprocess.Queue()
+        st_ov_queue = multiprocessing.Queue()
 
         # Create the Stockfish Bot process
         self.stockfish_bot_process = StockfishBot(
@@ -554,7 +551,7 @@ class GUI:
         self.stockfish_bot_process.start()
 
         # Create the overlay
-        self.overlay_screen_process = multiprocess.Process(
+        self.overlay_screen_process = multiprocessing.Process(
             target=run, args=(st_ov_queue,)
         )
         self.overlay_screen_process.start()
