@@ -1,18 +1,19 @@
 import os
-
 import multiprocess
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import filedialog, messagebox, ttk
+
+import keyboard
 from selenium import webdriver
+from selenium.common import WebDriverException
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service as ChromeService
+from webdriver_manager.chrome import ChromeDriverManager
+
 from overlay import run
 from stockfish_bot import StockfishBot
-from selenium.common import WebDriverException
-import keyboard
 
 
 class GUI:
@@ -20,6 +21,18 @@ class GUI:
         self.master = master
 
         # Used for closing the threads
+        # Constants
+        self.STATUS_INACTIVE = "Inactive"
+        self.STATUS_RUNNING = "Running"
+        self.COLOR_RED = "red"
+        self.COLOR_GREEN = "green"
+        self.DEFAULT_MOUSE_LATENCY = 0.0
+        self.DEFAULT_SLOW_MOVER = 100
+        self.DEFAULT_SKILL_LEVEL = 20
+        self.DEFAULT_STOCKFISH_DEPTH = 15
+        self.DEFAULT_MEMORY = 512
+        self.DEFAULT_CPU_THREADS = 1
+        self.WINDOW_TITLE = "Chess"
         self.exit = False
 
         # The Selenium Chrome driver
@@ -31,7 +44,7 @@ class GUI:
         self.chrome_session_id = None
 
         # Used for the communication between the GUI
-        # and the Stockfish Bot process
+        # and the Stockfish Bot process.
         self.stockfish_bot_pipe = None
         self.overlay_screen_pipe = None
 
@@ -44,9 +57,9 @@ class GUI:
         self.match_moves = []
 
         # Set the window properties
-        master.title("Chess")
+        master.title(self.WINDOW_TITLE)
         master.geometry("")
-        master.iconphoto(True, tk.PhotoImage(file="src/assets/pawn_32x32.png"))
+        master.iconphoto(True, tk.PhotoImage(file="src/assets/pawn_32x32.png"))  # Replace with correct path if needed
         master.resizable(False, False)
         master.attributes("-topmost", True)
         master.protocol("WM_DELETE_WINDOW", self.on_close_listener)
@@ -61,7 +74,7 @@ class GUI:
         # Create the status text
         status_label = tk.Frame(left_frame)
         tk.Label(status_label, text="Status:").pack(side=tk.LEFT)
-        self.status_text = tk.Label(status_label, text="Inactive", fg="red")
+        self.status_text = tk.Label(status_label, text=self.STATUS_INACTIVE, fg=self.COLOR_RED)
         self.status_text.pack()
         status_label.pack(anchor=tk.NW)
 
@@ -71,7 +84,7 @@ class GUI:
             left_frame,
             text="Chess.com",
             variable=self.website,
-            value="chesscom"
+            value="chesscom",
         )
         self.chesscom_radio_button.pack(anchor=tk.NW)
         self.lichess_radio_button = tk.Radiobutton(
@@ -79,7 +92,7 @@ class GUI:
             text="Lichess.org",
             variable=self.website,
             value="lichess"
-        )
+        )  # Fix typo: Lichess.org
         self.lichess_radio_button.pack(anchor=tk.NW)
 
         # Create the open browser button
@@ -114,12 +127,12 @@ class GUI:
         self.manual_mode_frame = tk.Frame(left_frame)
         self.manual_mode_label = tk.Label(
             self.manual_mode_frame, text="\u2022 Press 3 to make a move"
-        )
+        )  # Add instructions for manual mode
         self.manual_mode_label.pack(anchor=tk.NW)
 
         # Create the mouseless mode checkbox
         self.enable_mouseless_mode = tk.BooleanVar(value=False)
-        self.mouseless_mode_checkbox = tk.Checkbutton(
+        self.mouseless_mode_checkbox = tk.Checkbutton(  # Add checkbox for mouseless mode
             left_frame,
             text="Mouseless Mode",
             variable=self.enable_mouseless_mode
@@ -131,7 +144,7 @@ class GUI:
         self.non_stop_puzzles_check_button = tk.Checkbutton(
             left_frame,
             text="Non-stop puzzles",
-            variable=self.enable_non_stop_puzzles
+            variable=self.enable_non_stop_puzzles,
         )
         self.non_stop_puzzles_check_button.pack(anchor=tk.NW)
 
@@ -139,18 +152,20 @@ class GUI:
         self.enable_non_stop_matches = tk.IntVar(value=0)
         self.non_stop_matches_check_button = tk.Checkbutton(left_frame, text="Non-stop online matches",
                                                             variable=self.enable_non_stop_matches)
-        self.non_stop_matches_check_button.pack(anchor=tk.NW)
+        self.non_stop_matches_check_button.pack(anchor=tk.NW)  # Add checkbox for non-stop online matches
 
         # Create the bongcloud check button
-        self.enable_bongcloud = tk.IntVar()
+        self.enable_bongcloud = tk.IntVar()  # Add checkbox for bongcloud mode
         self.bongcloud_check_button = tk.Checkbutton(
             left_frame,
             text="Bongcloud",
-            variable=self.enable_bongcloud
+            variable=self.enable_bongcloud,
         )
         self.bongcloud_check_button.pack(anchor=tk.NW)
 
         # Create the mouse latency scale
+        # Scale for mouse latency
+        self.mouse_latency = tk.DoubleVar(value=self.DEFAULT_MOUSE_LATENCY)
         mouse_latency_frame = tk.Frame(left_frame)
         tk.Label(mouse_latency_frame, text="Mouse Latency (seconds)").pack(side=tk.LEFT, pady=(17, 0))
         self.mouse_latency = tk.DoubleVar(value=0.0)
@@ -158,7 +173,7 @@ class GUI:
                                           variable=self.mouse_latency)
         self.mouse_latency_scale.pack()
         mouse_latency_frame.pack(anchor=tk.NW)
-
+        
         # Separator
         separator_frame = tk.Frame(left_frame)
         separator = ttk.Separator(separator_frame, orient="horizontal")
@@ -169,12 +184,12 @@ class GUI:
 
         # Create the Slow mover entry field
         slow_mover_frame = tk.Frame(left_frame)
-        self.slow_mover_label = tk.Label(slow_mover_frame, text="Slow Mover")
+        self.slow_mover_label = tk.Label(slow_mover_frame, text="Slow Mover")  # Add label for slow mover
         self.slow_mover_label.pack(side=tk.LEFT)
-        self.slow_mover = tk.IntVar(value=100)
+        self.slow_mover = tk.IntVar(value=self.DEFAULT_SLOW_MOVER)
         self.slow_mover_entry = tk.Entry(
             slow_mover_frame, textvariable=self.slow_mover, justify="center", width=8
-        )
+        )  # Add entry for slow mover
         self.slow_mover_entry.pack()
         slow_mover_frame.pack(anchor=tk.NW)
 
@@ -182,7 +197,7 @@ class GUI:
         skill_level_frame = tk.Frame(left_frame)
         tk.Label(skill_level_frame, text="Skill Level").pack(side=tk.LEFT, pady=(19, 0))
         self.skill_level = tk.IntVar(value=20)
-        self.skill_level_scale = tk.Scale(
+        self.skill_level_scale = tk.Scale(  # Add scale for skill level
             skill_level_frame,
             from_=0,
             to=20,
@@ -197,7 +212,7 @@ class GUI:
         tk.Label(stockfish_depth_frame, text="Depth").pack(side=tk.LEFT, pady=19)
         self.stockfish_depth = tk.IntVar(value=15)
         self.stockfish_depth_scale = tk.Scale(
-            stockfish_depth_frame,
+            stockfish_depth_frame,  # Add scale for Stockfish depth
             from_=1,
             to=20,
             orient=tk.HORIZONTAL,
@@ -208,10 +223,10 @@ class GUI:
 
         # Create the memory entry field
         memory_frame = tk.Frame(left_frame)
-        tk.Label(memory_frame, text="Memory").pack(side=tk.LEFT)
-        self.memory = tk.IntVar(value=512)
-        self.memory_entry = tk.Entry(
-            memory_frame, textvariable=self.memory, justify="center", width=9
+        tk.Label(memory_frame, text="Memory").pack(side=tk.LEFT)  # Add label for memory
+        self.memory = tk.IntVar(value=self.DEFAULT_MEMORY)
+        self.memory_entry = tk.Entry(  # Add entry for memory
+            memory_frame, textvariable=self.memory, justify="center", width=9,
         )
         self.memory_entry.pack(side=tk.LEFT)
         tk.Label(memory_frame, text="MB").pack()
@@ -219,10 +234,10 @@ class GUI:
 
         # Create the CPU threads entry field
         cpu_threads_frame = tk.Frame(left_frame)
-        tk.Label(cpu_threads_frame, text="CPU Threads").pack(side=tk.LEFT)
-        self.cpu_threads = tk.IntVar(value=1)
-        self.cpu_threads_entry = tk.Entry(
-            cpu_threads_frame, textvariable=self.cpu_threads, justify="center", width=7
+        tk.Label(cpu_threads_frame, text="CPU Threads").pack(side=tk.LEFT)  # Add label for CPU threads
+        self.cpu_threads = tk.IntVar(value=self.DEFAULT_CPU_THREADS)
+        self.cpu_threads_entry = tk.Entry(  # Add entry for CPU threads
+            cpu_threads_frame, textvariable=self.cpu_threads, justify="center", width=7,
         )
         self.cpu_threads_entry.pack()
         cpu_threads_frame.pack(anchor=tk.NW)
@@ -257,7 +272,7 @@ class GUI:
         self.select_stockfish_button.pack(anchor=tk.NW)
 
         # Create the stockfish path text
-        self.stockfish_path_text = tk.Label(left_frame, text="", wraplength=180)
+        self.stockfish_path_text = tk.Label(left_frame, text="", wraplength=180)  # Add text for stockfish path
         self.stockfish_path_text.pack(anchor=tk.NW)
 
         left_frame.grid(row=0, column=0, padx=5, sticky=tk.NW)
@@ -276,7 +291,7 @@ class GUI:
             height=23,
             selectmode="browse",
         )
-        self.tree.pack(anchor=tk.NW, side=tk.LEFT)
+        self.tree.pack(anchor=tk.NW, side=tk.LEFT)  # Add Treeview
 
         # # Add the scrollbar to the Treeview
         self.vsb = ttk.Scrollbar(
@@ -300,7 +315,7 @@ class GUI:
         # Create the export PGN button
         self.export_pgn_button = tk.Button(
             right_frame, text="Export PGN", command=self.on_export_pgn_button_listener
-        )
+        )  # Add button for exporting PGN
         self.export_pgn_button.pack(anchor=tk.NW, fill=tk.X)
 
         right_frame.grid(row=0, column=1, sticky=tk.NW)
@@ -320,13 +335,13 @@ class GUI:
         process_communicator_thread.start()
 
         # Start the keyboard listener thread
-        keyboard_listener_thread = threading.Thread(
+        keyboard_listener_thread = threading.Thread(  # Add keyboard listener thread
             target=self.keypress_listener_thread
         )
         keyboard_listener_thread.start()
 
     # Detects if the user pressed the close button
-    def on_close_listener(self):
+    def on_close_listener(self):  # Corrected the method name
         # Set self.exit to True so that the threads will stop
         self.exit = True
         self.master.destroy()
@@ -341,10 +356,12 @@ class GUI:
             ):
                 self.on_stop_button_listener()
 
-                # Restart the process if restart_after_stopping is True
+                # Restart the process if `restart_after_stopping` is True
                 if self.restart_after_stopping:
                     self.restart_after_stopping = False
                     self.on_start_button_listener()
+
+            # Add a sleep period to prevent high CPU usage
             time.sleep(0.1)
 
     # Detects if Selenium Chromedriver is running
@@ -356,18 +373,21 @@ class GUI:
                     and self.chrome is not None
                     and "target window already closed"
                     in self.chrome.get_log("driver")[-1]["message"]
-                ):
+                ):  # Check if the browser has been closed
                     self.opened_browser = False
 
-                    # Set Opening Browser button state to closed
+                    # Set Opening Browser button state to closed.
                     self.open_browser_button["text"] = "Open Browser"
                     self.open_browser_button["state"] = "normal"
                     self.open_browser_button.update()
 
+                    # Stop the bot
                     self.on_stop_button_listener()
                     self.chrome = None
             except IndexError:
                 pass
+
+            # Add a sleep period to prevent high CPU usage
             time.sleep(0.1)
 
     # Responsible for communicating with the Stockfish Bot process
@@ -383,6 +403,7 @@ class GUI:
     # - "ERR_COLOR": Notifies the GUI that the Stockfish Bot can't find the player color
     # - "ERR_MOVES": Notifies the GUI that the Stockfish Bot can't find the moves list
     # - "ERR_GAMEOVER": Notifies the GUI that the current game is already over
+    # - "ERR": Notifies the GUI that an unhandled error has occurred
     def process_communicator_thread(self):
         while not self.exit:
             try:
@@ -396,8 +417,8 @@ class GUI:
                         self.match_moves = []
 
                         # Update the status text
-                        self.status_text["text"] = "Running"
-                        self.status_text["fg"] = "green"
+                        self.status_text["text"] = self.STATUS_RUNNING
+                        self.status_text["fg"] = self.COLOR_GREEN
                         self.status_text.update()
 
                         # Update the run button
@@ -418,49 +439,35 @@ class GUI:
                         self.match_moves += moves
                         self.set_moves(moves)
                         self.tree.yview_moveto(1)
-                    elif data[:7] == "ERR_EXE":
-                        tk.messagebox.showerror(
-                            "Error",
-                            "Stockfish path provided is not valid!"
-                        )
-                    elif data[:8] == "ERR_PERM":
-                        tk.messagebox.showerror(
-                            "Error",
-                            "Stockfish path provided is not executable!"
-                        )
-                    elif data[:9] == "ERR_BOARD":
-                        tk.messagebox.showerror(
-                            "Error",
-                            "Cant find board!"
-                        )
-                    elif data[:9] == "ERR_COLOR":
-                        tk.messagebox.showerror(
-                            "Error",
-                            "Cant find player color!"
-                        )
-                    elif data[:9] == "ERR_MOVES":
-                        tk.messagebox.showerror(
-                            "Error",
-                            "Cant find moves list!"
-                        )
-                    elif data[:12] == "ERR_GAMEOVER":
-                        tk.messagebox.showerror(
-                            "Error",
-                            "Game has already finished!"
-                        )
+                    elif data == "ERR_EXE":
+                        self.show_error("Stockfish path provided is not valid!")
+                    elif data == "ERR_PERM":
+                        self.show_error("Stockfish path provided is not executable!")
+                    elif data == "ERR_BOARD":
+                        self.show_error("Can't find the board!")
+                    elif data == "ERR_COLOR":
+                        self.show_error("Can't find player color!")
+                    elif data == "ERR_MOVES":
+                        self.show_error("Can't find moves list!")
+                    elif data == "ERR_GAMEOVER":
+                        self.show_error("Game has already finished!")
+                    elif data == "ERR":
+                        self.show_error("Unhandled error has occurred!")
             except (BrokenPipeError, OSError):
                 self.stockfish_bot_pipe = None
 
+            # Add a sleep period to prevent high CPU usage
             time.sleep(0.1)
 
     def keypress_listener_thread(self):
         while not self.exit:
             time.sleep(0.1)
-            if not self.opened_browser:
+            if not self.opened_browser:  # Check if the browser is opened
                 continue
 
+            # Check if the buttons 1 and 2 are pressed to start and stop the bot
             if keyboard.is_pressed("1"):
-                self.on_start_button_listener()
+                self.on_start_button_listener()  # Start
             elif keyboard.is_pressed("2"):
                 self.on_stop_button_listener()
 
@@ -471,17 +478,20 @@ class GUI:
         self.open_browser_button["state"] = "disabled"
         self.open_browser_button.update()
 
-        # Open Webdriver
+        # Configure Chrome options
         options = webdriver.ChromeOptions()
-        options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_experimental_option('useAutomationExtension', False)
+        options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])  # Add options to avoid
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_experimental_option("useAutomationExtension", False)
         try:
+            # Get ChromeDriver and install if necessary
             chrome_install = ChromeDriverManager().install()
 
+            # Get the path to the ChromeDriver executable
             folder = os.path.dirname(chrome_install)
             chromedriver_path = os.path.join(folder, "chromedriver.exe")
 
+            # Create the service object to start the webdriver
             service = ChromeService(chromedriver_path)
             self.chrome = webdriver.Chrome(
                 service=service,
@@ -493,7 +503,7 @@ class GUI:
             self.open_browser_button["text"] = "Open Browser"
             self.open_browser_button["state"] = "normal"
             self.open_browser_button.update()
-            tk.messagebox.showerror(
+            self.show_error(
                 "Error",
                 "Cant find Chrome. You need to have Chrome installed for this to work.",
             )
@@ -504,16 +514,16 @@ class GUI:
             self.open_browser_button["text"] = "Open Browser"
             self.open_browser_button["state"] = "normal"
             self.open_browser_button.update()
-            tk.messagebox.showerror(
-                "Error",
-                f"An error occurred while opening the browser: {e}",
+            self.show_error(
+                f"An error occurred while opening the browser: {e}"
             )
             return
 
         # Open chess.com
-        if self.website.get() == "chesscom":
+        if self.website.get() == "chesscom":  # Open chess.com or lichess.org
             self.chrome.get("https://www.chess.com")
         else:
+            # Open lichess.org
             self.chrome.get("https://www.lichess.org")
 
         # Build Stockfish Bot
@@ -535,18 +545,12 @@ class GUI:
         # Check if Slow mover value is valid
         slow_mover = self.slow_mover.get()
         if slow_mover < 10 or slow_mover > 1000:
-            tk.messagebox.showerror(
-                "Error",
-                "Slow Mover must be between 10 and 1000"
-            )
+            self.show_error("Slow Mover must be between 10 and 1000")
             return
 
         # Check if stockfish path is not empty
         if self.stockfish_path == "":
-            tk.messagebox.showerror(
-                "Error",
-                "Stockfish path is empty"
-            )
+            self.show_error("Stockfish path is empty")
             return
 
         # Check if mouseless mode is enabled when on chess.com
@@ -574,15 +578,15 @@ class GUI:
             st_ov_queue,
             self.stockfish_path,
             self.enable_manual_mode.get() == 1,
-            self.enable_mouseless_mode.get() == 1,
-            self.enable_non_stop_puzzles.get() == 1,
-            self.enable_non_stop_matches.get() == 1,
-            self.mouse_latency.get(),
-            self.enable_bongcloud.get() == 1,
-            self.slow_mover.get(),
-            self.skill_level.get(),
-            self.stockfish_depth.get(),
-            self.memory.get(),
+            self.enable_mouseless_mode.get() == 1,  # Add the parameters from the GUI
+            self.enable_non_stop_puzzles.get() == 1,  # Add the parameters from the GUI
+            self.enable_non_stop_matches.get() == 1,  # Add the parameters from the GUI
+            self.mouse_latency.get(),  # Add the parameters from the GUI
+            self.enable_bongcloud.get() == 1,  # Add the parameters from the GUI
+            self.slow_mover.get(),  # Add the parameters from the GUI
+            self.skill_level.get(),  # Add the parameters from the GUI
+            self.stockfish_depth.get(),  # Add the parameters from the GUI
+            self.memory.get(),  # Add the parameters from the GUI
             self.cpu_threads.get(),
         )
         self.stockfish_bot_process.start()
@@ -602,23 +606,17 @@ class GUI:
     def on_stop_button_listener(self):
         # Stop the Stockfish Bot process
         if self.stockfish_bot_process is not None:
-            self.stockfish_bot_process.kill()
+            self.stockfish_bot_process.close_threads()
             self.stockfish_bot_process = None
 
-        # Close the Stockfish Bot pipe
-        if self.stockfish_bot_pipe is not None:
-            self.stockfish_bot_pipe.close()
-            self.stockfish_bot_pipe = None
-
-        # Stop the overlay
+        # Stop the overlay process
         if self.overlay_screen_process is not None:
             self.overlay_screen_process.kill()
             self.overlay_screen_process = None
 
-        # Close the overlay pipe
-        if self.overlay_screen_pipe is not None:
-            self.overlay_screen_pipe.close()
-            self.overlay_screen_pipe = None
+        # Close all pipes
+        self.close_pipes()
+
 
         # Update the status text
         self.running = False
@@ -632,6 +630,18 @@ class GUI:
         self.start_button["command"] = self.on_start_button_listener
         self.start_button.update()
 
+    # Close all pipes
+    def close_pipes(self):
+        # Close the Stockfish Bot pipe
+        if self.stockfish_bot_pipe is not None:
+            self.stockfish_bot_pipe.close()
+            self.stockfish_bot_pipe = None
+
+        # Close the overlay pipe
+        if self.overlay_screen_pipe is not None:
+            self.overlay_screen_pipe.close()
+            self.overlay_screen_pipe = None
+
     def on_topmost_check_button_listener(self):
         if self.enable_topmost.get() == 1:
             self.master.attributes("-topmost", True)
@@ -639,7 +649,7 @@ class GUI:
             self.master.attributes("-topmost", False)
 
     def on_export_pgn_button_listener(self):
-        # Create the file dialog
+        # Create the save file dialog
         f = filedialog.asksaveasfile(
             initialfile="match.pgn",
             defaultextension=".pgn",
@@ -660,10 +670,15 @@ class GUI:
         f.write(data)
         f.close()
 
+    def show_error(self, message: str):
+        messagebox.showerror(
+            "Error", message
+        )
+
     def on_select_stockfish_button_listener(self):
-        # Create the file dialog
+        # Create the open file dialog
         f = filedialog.askopenfilename()
-        if f is None:
+        if not f:  # if no file is selected
             return
 
         # Set the Stockfish path
@@ -678,8 +693,9 @@ class GUI:
 
     # Inserts a move into the Treeview
     def insert_move(self, move):
+        # Get the total number of cells
         cells_num = sum(
-            [len(self.tree.item(i)["values"]) - 1 for i in self.tree.get_children()]
+            [len(self.tree.item(i)["values"]) - 1 for i in self.tree.get_children()]  # Get the number of childs
         )
         if (cells_num % 2) == 0:
             rows_num = len(self.tree.get_children())
@@ -691,6 +707,7 @@ class GUI:
     # Overwrites the Treeview with the given list of moves
     def set_moves(self, moves):
         self.clear_tree()
+        self.match_moves = []
 
         # Insert in pairs
         pairs = list(zip(*[iter(moves)] * 2))

@@ -1,193 +1,168 @@
-import re
+from enum import Enum
 
-from selenium.common import NoSuchElementException, StaleElementReferenceException
+from selenium.common import NoSuchElementException, TimeoutException
 from selenium.webdriver.common.by import By
-
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 from grabbers.grabber import Grabber
 
 
+class MoveType(Enum):
+    NORMAL = 1
+    PUZZLE = 2
+    UNKNOWN = 3
+
+
 class LichessGrabber(Grabber):
+    """
+    Concrete class for interacting with lichess.org.
+    """
+
+    # Constants for XPATH selectors
+    BOARD_XPATH = '//*[@id="main-wrap"]/main/div[1]/div[1]/div/cg-container'
+    PUZZLE_BOARD_XPATH = '/html/body/div[2]/main/div[1]/div/cg-container'
+    GAME_OVER_XPATH = '//*[@id="main-wrap"]/main/aside/div/section[2]'
+    PUZZLE_GAME_OVER_XPATH = '/html/body/div[2]/main/div[2]/div[3]/div[1]'
+    NORMAL_MOVE_LIST_XPATH = '//*[@id="main-wrap"]/main/div[1]/rm6/l4x'
+    NORMAL_MOVE_LIST_EMPTY_XPATH = '//*[@id="main-wrap"]/main/div[1]/rm6'
+    PUZZLE_MOVE_LIST_XPATH = '/html/body/div[2]/main/div[2]/div[2]/div'
+    PUZZLE_TEXT_XPATH = "/html/body/div[2]/main/aside/div[1]/div[1]/div/p[1]"
+    PUZZLE_NEXT_BUTTON_XPATH = "/html/body/div[2]/main/div[2]/div[3]/a"
+    PUZZLE_NEXT_BUTTON_2_XPATH = '//*[@id="main-wrap"]/main/div[2]/div[3]/div[3]/a[2]'
+    NEW_GAME_BUTTON_XPATH = "//*[contains(text(), 'New opponent')]"
+    PIECE_SQUARE_XPATH = "./*"
+
     def __init__(self, chrome_url, chrome_session_id):
         super().__init__(chrome_url, chrome_session_id)
-        self.tag_name = None
-        self.moves_list = {}
+        self.move_type = MoveType.UNKNOWN
 
     def update_board_elem(self):
-        # Keep looking for board
-        while True:
+        """
+        Updates the internal representation of the board element.
+        """
+        try:
+            # Try finding the normal board
+            self._board_elem = self.chrome.find_element(By.XPATH, self.BOARD_XPATH)
+            self.move_type = MoveType.NORMAL
+        except NoSuchElementException:
             try:
-                # Try finding the normal board
-                self._board_elem = self.chrome.find_element(By.XPATH,
-                                                            '//*[@id="main-wrap"]/main/div[1]/div[1]/div/cg-container')
-                return
+                # Try finding the board in the puzzles page
+                self._board_elem = self.chrome.find_element(By.XPATH, self.PUZZLE_BOARD_XPATH)
+                self.move_type = MoveType.PUZZLE
             except NoSuchElementException:
-                try:
-                    # Try finding the board in the puzzles page
-                    self._board_elem = self.chrome.find_element(By.XPATH, '/html/body/div[2]/main/div[1]/div/cg-container')
-                    return
-                except NoSuchElementException:
-                    self._board_elem = None
+                self._board_elem = None
+                self.move_type = MoveType.UNKNOWN
 
     def is_white(self):
-        # sourcery skip: assign-if-exp, boolean-if-exp-identity, remove-unnecessary-cast
-        # Get "ranks" child
-        children = self._board_elem.find_elements(By.XPATH, "./*")
-        child = [x for x in children if "ranks" in x.get_attribute("class")][0]
-        if child.get_attribute("class") == "ranks":
-            return True
-        else:
-            return False
+        """
+        Determines if the player is playing as white.
+        Returns:
+            bool: True if the player is white, False if black, None if unknown.
+        """
+        try:
+            # Get the first element inside the board
+            children = self._board_elem.find_elements(By.XPATH, self.PIECE_SQUARE_XPATH)
+            first_child = children[0]
+            
+            # Check if the first child has the attribute of the white square
+            return "white" in first_child.get_attribute("class")
+        except (NoSuchElementException, IndexError, AttributeError):
+            return None
 
     def is_game_over(self):
-        # sourcery skip: assign-if-exp, boolean-if-exp-identity, reintroduce-else, remove-unnecessary-cast
+        """
+        Checks if the game is over.
+        Returns:
+            bool: True if the game is over, False otherwise.
+        """
         try:
-            # Find the game over window
-            self.chrome.find_element(By.XPATH, '//*[@id="main-wrap"]/main/aside/div/section[2]')
-
-            # If we don't have an exception at this point, we have found the game over window
-            return True
-        except NoSuchElementException:
-            # Try finding the puzzles game over window and checking its class
-            try:
-                # The game over window
-                game_over_window = self.chrome.find_element(By.XPATH, '/html/body/div[2]/main/div[2]/div[3]/div[1]')
-
-                if game_over_window.get_attribute("class") == "complete":
-                    return True
-
-                # If we don't have an exception at this point and the window's class is not "complete",
-                # then the game is still going
-                return False
-            except NoSuchElementException:
-                return False
-
-    def set_moves_tag_name(self):
-        if self.is_game_puzzles():
-            return False
-
-        move_list_elem = self.get_normal_move_list_elem()
-
-        if move_list_elem is None or move_list_elem == []:
-            return False
-
-        try:
-            last_child = move_list_elem.find_element(By.XPATH, "*[last()]")
-            self.tag_name = last_child.tag_name
-
-            return True
-        except NoSuchElementException:
-            return False
-
-    def get_move_list(self):
-        # sourcery skip: assign-if-exp, merge-else-if-into-elif, use-fstring-for-concatenation
-        is_puzzles = self.is_game_puzzles()
-
-        # Find the move list element
-        if is_puzzles:
-            move_list_elem = self.get_puzzles_move_list_elem()
-
-            if move_list_elem is None:
-                return None
-        else:
-            move_list_elem = self.get_normal_move_list_elem()
-
-            if move_list_elem is None:
-                return None
-            if (not move_list_elem) or (self.tag_name is None and self.set_moves_tag_name() is False):
-                return []
-
-        # Get the move elements (children of the move list element)
-        try:
-            if not is_puzzles:
-                if not self.moves_list:
-                    # If the moves list is empty, find all moves
-                    children = move_list_elem.find_elements(By.CSS_SELECTOR, self.tag_name)
-                else:
-                    # If the moves list is not empty, find only the new moves
-                    children = move_list_elem.find_elements(By.CSS_SELECTOR, self.tag_name + ":not([data-processed])")
+            if self.move_type == MoveType.NORMAL:
+                # Find the game over window
+                self.chrome.find_element(By.XPATH, self.GAME_OVER_XPATH)
+                return True
+            elif self.move_type == MoveType.PUZZLE:
+                # Check if the puzzle is complete
+                game_over_window = self.chrome.find_element(By.XPATH, self.PUZZLE_GAME_OVER_XPATH)
+                return game_over_window.get_attribute("class") == "complete"
             else:
-                if not self.moves_list:
-                    # If the moves list is empty, find all moves
-                    children = move_list_elem.find_elements(By.CSS_SELECTOR, "move")
-                else:
-                    # If the moves list is not empty, find only the new moves
-                    children = move_list_elem.find_elements(By.CSS_SELECTOR, "move:not([data-processed])")
+                return False
         except NoSuchElementException:
-            return None
-
-        # Get the moves from the elements
-        for move_element in children:
-            # Sanitize the move
-            move = re.sub(r"[^a-zA-Z0-9+-]", "", move_element.text)
-            if move != "":
-                self.moves_list[move_element.id] = move
-
-            # Mark the move as processed
-            self.chrome.execute_script("arguments[0].setAttribute('data-processed', 'true')", move_element)
-
-        return [val for val in self.moves_list.values()]
-
-    def get_puzzles_move_list_elem(self):
-        try:
-            # Try finding the move list in the puzzles page
-            move_list_elem = self.chrome.find_element(By.XPATH, '/html/body/div[2]/main/div[2]/div[2]/div')
-
-            return move_list_elem
-        except NoSuchElementException:
-            return None
-
-    def get_normal_move_list_elem(self):
-        try:
-            # Try finding the normal move list
-            move_list_elem = self.chrome.find_element(By.XPATH, '//*[@id="main-wrap"]/main/div[1]/rm6/l4x')
-
-            return move_list_elem
-        except NoSuchElementException:
-            try:
-                # Try finding the normal move list when there are no moves yet
-                self.chrome.find_element(By.XPATH, '//*[@id="main-wrap"]/main/div[1]/rm6')
-
-                # If we don't have an exception at this point, we don't have any moves yet
-                return []
-            except NoSuchElementException:
-                return None
+            return False
 
     def is_game_puzzles(self):
-        try:
-            # Try finding the puzzles text
-            self.chrome.find_element(By.XPATH, "/html/body/div[2]/main/aside/div[1]/div[1]/div/p[1]")
+        """
+        Checks if the current game is a puzzle.
+        Returns:
+            bool: True if it's a puzzle, False otherwise.
+        """
+        return self.move_type == MoveType.PUZZLE
 
-            # If we don't have an exception at this point, the game is a puzzle
-            return True
-        except NoSuchElementException:
-            return False
+    def get_move_list(self):
+        """
+        Gets the list of moves from the game.
+        Returns:
+            list: A list of moves, e.g., ["e4", "c5", "Nf3"].
+        """
+        try:
+            # Wait for the element to be found
+            if self.move_type == MoveType.NORMAL:
+                move_list_elem = WebDriverWait(self.chrome, 10).until(
+                    EC.presence_of_element_located((By.XPATH, self.NORMAL_MOVE_LIST_XPATH))
+                )
+                
+                #If the element does not have childs, check if it exist the empty element
+                if not move_list_elem.find_elements(By.XPATH, "./*"):
+                    self.chrome.find_element(By.XPATH, self.NORMAL_MOVE_LIST_EMPTY_XPATH)
+                    return []
+                
+                # Find all children elements that have the class move
+                children = move_list_elem.find_elements(By.XPATH, ".//*[contains(@class, 'move')]")
+            elif self.move_type == MoveType.PUZZLE:
+                move_list_elem = self.chrome.find_element(By.XPATH, self.PUZZLE_MOVE_LIST_XPATH)
+                # Find all elements with the move tag
+                children = move_list_elem.find_elements(By.TAG_NAME, "move")
+            else:
+                return None
+
+            # Extract moves from elements
+            moves = [child.text.strip() for child in children]
+            return moves
+
+        except (NoSuchElementException, TimeoutException):
+            return None
 
     def click_puzzle_next(self):
-        # Find the next continue training button
+        """
+        Clicks the "next puzzle" button.
+        """
         try:
-            next_button = self.chrome.find_element(By.XPATH, "/html/body/div[2]/main/div[2]/div[3]/a")
+            next_button = self.chrome.find_element(By.XPATH, self.PUZZLE_NEXT_BUTTON_XPATH)
         except NoSuchElementException:
             try:
-                next_button = self.chrome.find_element(By.XPATH, '//*[@id="main-wrap"]/main/div[2]/div[3]/div[3]/a[2]')
+                next_button = self.chrome.find_element(By.XPATH, self.PUZZLE_NEXT_BUTTON_2_XPATH)
             except NoSuchElementException:
                 return
 
-        # Click the continue training button
         self.chrome.execute_script("arguments[0].click();", next_button)
 
     def click_game_next(self):
-        # Find the next new game button
+        """
+        Clicks the "new game" button.
+        """
         try:
-            next_button = self.chrome.find_element(By.XPATH, "//*[contains(text(), 'New opponent')]")
+            next_button = self.chrome.find_element(By.XPATH, self.NEW_GAME_BUTTON_XPATH)
         except NoSuchElementException:
             return
-        except StaleElementReferenceException:
-            return
 
-        # Click the next game button
         self.chrome.execute_script("arguments[0].click();", next_button)
 
     def make_mouseless_move(self, move, move_count):
-        message = '{"t":"move","d":{"u":"' + move + '","b":1,"a":' + str(move_count) + '}}'
-        script = 'lichess.socket.ws.send(JSON.stringify(' + message + '))'
+        """
+        Makes a move without moving the mouse.
+        Args:
+            move (string): The move in uci format.
+            move_count (int): The move count.
+        """
+        message = f'{{"t":"move","d":{{"u":"{move}","b":1,"a":{move_count}}}}}'
+        script = f'lichess.socket.ws.send(JSON.stringify({message}))'
         self.chrome.execute_script(script)
